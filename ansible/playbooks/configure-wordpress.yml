@@ -1,0 +1,111 @@
+---
+- name: Configure WordPress application server
+  hosts: wordpress
+  become: true
+
+  vars_files:
+    - ../group_vars/wordpress.yml
+
+  pre_tasks:
+    - name: Retrieve RDS master secret from AWS Secrets Manager
+      ansible.builtin.command:
+        cmd: >
+          aws secretsmanager get-secret-value
+          --secret-id {{ rds_secret_arn }}
+          --region {{ aws_region }}
+          --query SecretString
+          --output text
+      delegate_to: localhost
+      become: false
+      register: rds_secret_raw
+      changed_when: false
+      no_log: true
+
+    - name: Parse RDS master secret
+      ansible.builtin.set_fact:
+        db_password: "{{ (rds_secret_raw.stdout | from_json).password }}"
+      no_log: true
+
+  tasks:
+    - name: Install Apache, PHP, MySQL client, and required packages
+      ansible.builtin.dnf:
+        name:
+          - httpd
+          - php
+          - php-mysqlnd
+          - mariadb105
+          - unzip
+          - wget
+        state: present
+
+    - name: Ensure Apache is enabled and running
+      ansible.builtin.service:
+        name: httpd
+        state: started
+        enabled: true
+
+    - name: Create temporary WordPress migration directory
+      ansible.builtin.file:
+        path: /tmp/wordpress-migration-files
+        state: directory
+        mode: "0700"
+
+    - name: Download WordPress files backup from migration S3 bucket
+      ansible.builtin.command:
+        cmd: >
+          aws s3 cp
+          s3://{{ migration_bucket_name }}/{{ wordpress_files_backup_key }}
+          /tmp/wordpress-migration-files/wordpress-files.tar.gz
+      register: wordpress_files_download
+      changed_when: wordpress_files_download.rc == 0
+
+    - name: Verify WordPress files backup exists
+      ansible.builtin.stat:
+        path: /tmp/wordpress-migration-files/wordpress-files.tar.gz
+      register: wordpress_files_backup
+
+    - name: Stop if WordPress files backup was not downloaded
+      ansible.builtin.fail:
+        msg: "WordPress files backup was not successfully downloaded from S3."
+      when: not wordpress_files_backup.stat.exists
+
+    - name: Extract migrated WordPress files
+      ansible.builtin.unarchive:
+        src: /tmp/wordpress-migration-files/wordpress-files.tar.gz
+        dest: /tmp/wordpress-migration-files
+        remote_src: true
+
+    - name: Copy migrated WordPress files to Apache document root
+      ansible.builtin.copy:
+        src: /tmp/wordpress-migration-files/wordpress/
+        dest: "{{ wordpress_install_dir }}/"
+        remote_src: true
+        owner: apache
+        group: apache
+        mode: preserve
+
+    - name: Deploy WordPress database configuration
+      ansible.builtin.template:
+        src: ../templates/wp-config.php.j2
+        dest: "{{ wordpress_install_dir }}/wp-config.php"
+        owner: apache
+        group: apache
+        mode: "0640"
+      no_log: true
+
+    - name: Set WordPress directory ownership
+      ansible.builtin.file:
+        path: "{{ wordpress_install_dir }}"
+        owner: apache
+        group: apache
+        recurse: true
+
+    - name: Remove temporary WordPress migration files
+      ansible.builtin.file:
+        path: /tmp/wordpress-migration-files
+        state: absent
+
+    - name: Restart Apache
+      ansible.builtin.service:
+        name: httpd
+        state: restarted

@@ -38,3 +38,15 @@ terraform.rc
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Saved Terraform plans
+*.tfplan
+# Local WordPress source and migration backups
+backup/source/
+backup/package/
+
+# Local WP-CLI executable
+wp-cli.phar
+
+# Python virtual environment
+.venv/

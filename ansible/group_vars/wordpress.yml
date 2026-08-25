@@ -1,0 +1,12 @@
+aws_region: us-east-1
+
+db_name: company_db
+db_username: admin
+
+migration_bucket_name: thompson-wordpress-migration-202937691499
+migration_backup_key: wordpress.sql
+wordpress_files_backup_key: wordpress-files.tar.gz
+
+ansible_transfer_bucket_name: thompson-ansible-transfer-202937691499
+
+wordpress_install_dir: /var/www/html

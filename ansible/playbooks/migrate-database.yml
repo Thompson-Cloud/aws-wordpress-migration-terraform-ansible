@@ -1,0 +1,81 @@
+---
+- name: Migrate WordPress database to RDS
+  hosts: wordpress
+  become: true
+
+  vars_files:
+    - ../group_vars/wordpress.yml
+
+  pre_tasks:
+    - name: Retrieve RDS master secret from AWS Secrets Manager
+      ansible.builtin.command:
+        cmd: >
+          aws secretsmanager get-secret-value
+          --secret-id {{ rds_secret_arn }}
+          --region {{ aws_region }}
+          --query SecretString
+          --output text
+      delegate_to: localhost
+      become: false
+      register: rds_secret_raw
+      changed_when: false
+      no_log: true
+
+    - name: Parse RDS master secret
+      ansible.builtin.set_fact:
+        db_password: "{{ (rds_secret_raw.stdout | from_json).password }}"
+      no_log: true
+
+  tasks:
+    - name: Create temporary migration directory
+      ansible.builtin.file:
+        path: /tmp/wordpress-migration
+        state: directory
+        mode: "0700"
+
+    - name: Download database backup from migration S3 bucket
+      ansible.builtin.command:
+        cmd: >
+          aws s3 cp
+          s3://{{ migration_bucket_name }}/{{ migration_backup_key }}
+          /tmp/wordpress-migration/backup.sql
+      register: s3_download
+      changed_when: s3_download.rc == 0
+
+    - name: Verify database backup exists
+      ansible.builtin.stat:
+        path: /tmp/wordpress-migration/backup.sql
+      register: database_backup
+
+    - name: Stop if database backup was not downloaded
+      ansible.builtin.fail:
+        msg: "Database backup was not successfully downloaded from S3."
+      when: not database_backup.stat.exists
+
+    - name: Import WordPress database into RDS
+      ansible.builtin.shell:
+        cmd: >
+          mysql
+          --host={{ db_host }}
+          --user={{ db_username }}
+          --password='{{ db_password }}'
+          {{ db_name }}
+          < /tmp/wordpress-migration/backup.sql
+      no_log: true
+
+    - name: Update WordPress site URLs for AWS
+      ansible.builtin.shell:
+        cmd: >
+          mysql
+          --host={{ db_host }}
+          --user={{ db_username }}
+          --password='{{ db_password }}'
+          {{ db_name }}
+          -e "UPDATE wp_options SET option_value='{{ wordpress_site_url }}'
+          WHERE option_name IN ('home','siteurl');"
+      no_log: true
+
+    - name: Remove temporary database backup
+      ansible.builtin.file:
+        path: /tmp/wordpress-migration/backup.sql
+        state: absent

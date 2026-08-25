@@ -1,0 +1,56 @@
+---
+- name: Validate migrated WordPress application
+  hosts: wordpress
+  become: true
+
+  vars_files:
+    - ../group_vars/wordpress.yml
+
+  pre_tasks:
+    - name: Retrieve RDS master secret from AWS Secrets Manager
+      ansible.builtin.command:
+        cmd: >
+          aws secretsmanager get-secret-value
+          --secret-id {{ rds_secret_arn }}
+          --region {{ aws_region }}
+          --query SecretString
+          --output text
+      delegate_to: localhost
+      become: false
+      register: rds_secret_raw
+      changed_when: false
+      no_log: true
+
+    - name: Parse RDS master secret
+      ansible.builtin.set_fact:
+        db_password: "{{ (rds_secret_raw.stdout | from_json).password }}"
+      no_log: true
+
+  tasks:
+    - name: Query migrated WordPress data in RDS
+      ansible.builtin.shell:
+        cmd: >
+          mysql
+          --host={{ db_host }}
+          --user={{ db_username }}
+          --password='{{ db_password }}'
+          {{ db_name }}
+          --batch
+          --skip-column-names
+          -e "
+          SELECT option_name, option_value
+          FROM wp_options
+          WHERE option_name IN ('home','siteurl');
+
+          SELECT ID, post_title, post_type, post_status
+          FROM wp_posts
+          WHERE post_title IN
+          ('Home','About Tech Pathway','Migrating WordPress to AWS','Tech Pathway Profile');
+          "
+      register: wordpress_validation
+      changed_when: false
+      no_log: true
+
+    - name: Display migrated WordPress validation results
+      ansible.builtin.debug:
+        var: wordpress_validation.stdout_lines
