@@ -33,5 +33,6 @@ resource "aws_instance" "wordpress" {
 
   tags = {
     Name = "wordpress-migration-ec2"
+    Role = "wordpress-app"
   }
 }

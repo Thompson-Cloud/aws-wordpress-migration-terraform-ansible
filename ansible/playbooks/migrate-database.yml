@@ -7,6 +7,11 @@
     - ../group_vars/wordpress.yml
 
   pre_tasks:
+    - name: Discover target RDS database
+      ansible.builtin.include_tasks:
+        file: ../tasks/discover-rds.yml
+      run_once: true
+
     - name: Retrieve RDS master secret from AWS Secrets Manager
       ansible.builtin.command:
         cmd: >
@@ -20,11 +25,14 @@
       register: rds_secret_raw
       changed_when: false
       no_log: true
+      run_once: true
 
     - name: Parse RDS master secret
       ansible.builtin.set_fact:
+        db_username: "{{ (rds_secret_raw.stdout | from_json).username }}"
         db_password: "{{ (rds_secret_raw.stdout | from_json).password }}"
       no_log: true
+      run_once: true
 
   tasks:
     - name: Create temporary migration directory
@@ -32,6 +40,7 @@
         path: /tmp/wordpress-migration
         state: directory
         mode: "0700"
+      run_once: true
 
     - name: Download database backup from migration S3 bucket
       ansible.builtin.command:
@@ -41,16 +50,19 @@
           /tmp/wordpress-migration/backup.sql
       register: s3_download
       changed_when: s3_download.rc == 0
+      run_once: true
 
     - name: Verify database backup exists
       ansible.builtin.stat:
         path: /tmp/wordpress-migration/backup.sql
       register: database_backup
+      run_once: true
 
     - name: Stop if database backup was not downloaded
       ansible.builtin.fail:
         msg: "Database backup was not successfully downloaded from S3."
       when: not database_backup.stat.exists
+      run_once: true
 
     - name: Import WordPress database into RDS
       ansible.builtin.shell:
@@ -62,6 +74,7 @@
           {{ db_name }}
           < /tmp/wordpress-migration/backup.sql
       no_log: true
+      run_once: true
 
     - name: Update WordPress site URLs for AWS
       ansible.builtin.shell:
@@ -74,8 +87,10 @@
           -e "UPDATE wp_options SET option_value='{{ wordpress_site_url }}'
           WHERE option_name IN ('home','siteurl');"
       no_log: true
+      run_once: true
 
     - name: Remove temporary database backup
       ansible.builtin.file:
         path: /tmp/wordpress-migration/backup.sql
         state: absent
+      run_once: true

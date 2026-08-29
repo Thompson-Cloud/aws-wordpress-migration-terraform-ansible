@@ -1,10 +1,12 @@
 plugin: amazon.aws.aws_ec2
 
 regions:
-  - us-east-1
+  - "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
 
 filters:
-  tag:Name: wordpress-migration-ec2
+  tag:Project: aws-wordpress-migration
+  tag:Environment: "{{ lookup('env', 'TARGET_ENVIRONMENT') }}"
+  tag:Role: wordpress-app
   instance-state-name: running
 
 hostnames:
@@ -12,8 +14,8 @@ hostnames:
 
 compose:
   ansible_connection: "'amazon.aws.aws_ssm'"
-  ansible_aws_ssm_region: "'us-east-1'"
-  ansible_aws_ssm_bucket_name: "'thompson-ansible-transfer-202937691499'"
+  ansible_aws_ssm_region: "lookup('env', 'AWS_REGION') | default('us-east-1', true)"
+  ansible_aws_ssm_bucket_name: "lookup('env', 'ANSIBLE_TRANSFER_BUCKET')"
 
 groups:
   wordpress: true

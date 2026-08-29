@@ -1,0 +1,73 @@
+---
+- name: Retrieve RDS instances from AWS
+  amazon.aws.rds_instance_info:
+    region: "{{ aws_region }}"
+  delegate_to: localhost
+  become: false
+  register: rds_info
+
+- name: Start empty RDS match list
+  ansible.builtin.set_fact:
+    matching_rds_instances: []
+
+- name: Select RDS instance matching migration tags
+  ansible.builtin.set_fact:
+    matching_rds_instances: "{{ matching_rds_instances + [item] }}"
+  loop: "{{ rds_info.instances }}"
+  when:
+    - item.tags.Project | default('') == project_name
+    - item.tags.Environment | default('') == target_environment
+    - item.tags.Role | default('') == 'wordpress-db'
+  no_log: true
+
+- name: Ensure exactly one RDS database matched
+  ansible.builtin.assert:
+    that:
+      - matching_rds_instances | length == 1
+    fail_msg: >-
+      Expected exactly one RDS database for
+      Project={{ project_name }},
+      Environment={{ target_environment }},
+      Role=wordpress-db.
+      Found {{ matching_rds_instances | length }}.
+    success_msg: "Exactly one WordPress RDS database discovered."
+
+- name: Set discovered RDS information
+  ansible.builtin.set_fact:
+    rds_identifier: "{{ matching_rds_instances[0].db_instance_identifier }}"
+    db_host: "{{ matching_rds_instances[0].endpoint.address }}"
+    rds_status: "{{ matching_rds_instances[0].db_instance_status }}"
+
+- name: Ensure discovered RDS database is available
+  ansible.builtin.assert:
+    that:
+      - rds_status == 'available'
+    fail_msg: >-
+      RDS instance {{ rds_identifier }} is not available.
+      Current status: {{ rds_status }}
+    success_msg: "RDS database is available."
+
+- name: Retrieve RDS managed secret ARN
+  ansible.builtin.command:
+    cmd: >
+      aws rds describe-db-instances
+      --region {{ aws_region }}
+      --db-instance-identifier {{ rds_identifier }}
+      --query 'DBInstances[0].MasterUserSecret.SecretArn'
+      --output text
+  delegate_to: localhost
+  become: false
+  register: rds_secret_lookup
+  changed_when: false
+  no_log: true
+
+- name: Set RDS secret ARN
+  ansible.builtin.set_fact:
+    rds_secret_arn: "{{ rds_secret_lookup.stdout }}"
+
+- name: Ensure RDS secret ARN was discovered
+  ansible.builtin.assert:
+    that:
+      - rds_secret_arn | length > 0
+      - rds_secret_arn != 'None'
+    fail_msg: "Unable to discover the RDS managed Secrets Manager secret."

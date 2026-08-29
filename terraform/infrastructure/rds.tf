@@ -43,5 +43,6 @@ resource "aws_db_instance" "wordpress" {
 
   tags = {
     Name = "wordpress-migration-rds"
+    Role = "wordpress-db"
   }
 }

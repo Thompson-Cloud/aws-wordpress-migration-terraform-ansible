@@ -1,0 +1,313 @@
+name: WordPress Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - lab
+          - dev
+          - staging
+          - prod
+
+      migration_bucket:
+        description: "S3 bucket containing WordPress migration artifacts"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  TARGET_ENVIRONMENT: ${{ inputs.environment }}
+
+jobs:
+
+  # =========================================================
+  # JOB 1 - Validate migration source files
+  # Runs in parallel with validate-target
+  # =========================================================
+  validate-artifacts:
+    name: Validate Migration Artifacts
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_MIGRATION_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate S3 migration artifacts
+        run: |
+          ./scripts/validate-artifacts.sh \
+            "${AWS_REGION}" \
+            "${{ inputs.migration_bucket }}"
+
+
+  # =========================================================
+  # JOB 2 - Validate target EC2 discovery
+  # Runs in parallel with validate-artifacts
+  # =========================================================
+  validate-target:
+    name: Validate Target Environment
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    env:
+      ANSIBLE_TRANSFER_BUCKET: ${{ vars.ANSIBLE_TRANSFER_BUCKET }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_MIGRATION_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible-core boto3 botocore
+          ansible-galaxy collection install amazon.aws
+
+      - name: Verify WordPress EC2 inventory
+        run: |
+          HOST_COUNT=$(ansible-inventory \
+            -i ansible/inventory/aws_ec2.yml \
+            --list |
+            python -c "import json,sys; data=json.load(sys.stdin); print(len(data.get('_meta', {}).get('hostvars', {})))")
+
+          echo "Discovered WordPress application hosts: ${HOST_COUNT}"
+
+          if [ "${HOST_COUNT}" -eq 0 ]; then
+            echo "ERROR: No WordPress EC2 instances were discovered."
+            exit 1
+          fi
+
+
+  # =========================================================
+  # JOB 3 - Preflight
+  # Waits for BOTH validation jobs
+  # =========================================================
+  preflight:
+    name: Migration Preflight
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    needs:
+      - validate-artifacts
+      - validate-target
+
+    env:
+      ANSIBLE_TRANSFER_BUCKET: ${{ vars.ANSIBLE_TRANSFER_BUCKET }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_MIGRATION_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible-core boto3 botocore
+          ansible-galaxy collection install amazon.aws
+
+      - name: Install AWS Session Manager plugin
+        run: |
+          curl \
+            "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+            -o session-manager-plugin.deb
+
+          sudo dpkg -i session-manager-plugin.deb
+
+          session-manager-plugin --version
+
+      - name: Run migration preflight
+        run: |
+          ansible-playbook \
+            -i ansible/inventory/aws_ec2.yml \
+            ansible/playbooks/preflight.yml \
+            -e "target_environment=${TARGET_ENVIRONMENT}"
+
+
+  # =========================================================
+  # JOB 4 - Configure WordPress
+  # Starts only after preflight succeeds
+  # =========================================================
+  configure:
+    name: Configure WordPress
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    needs: preflight
+
+    env:
+      ANSIBLE_TRANSFER_BUCKET: ${{ vars.ANSIBLE_TRANSFER_BUCKET }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_MIGRATION_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible-core boto3 botocore
+          ansible-galaxy collection install amazon.aws
+
+      - name: Install AWS Session Manager plugin
+        run: |
+          curl \
+            "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+            -o session-manager-plugin.deb
+
+          sudo dpkg -i session-manager-plugin.deb
+
+      - name: Configure WordPress fleet
+        run: |
+          ansible-playbook \
+            -i ansible/inventory/aws_ec2.yml \
+            ansible/playbooks/configure-wordpress.yml \
+            -e "target_environment=${TARGET_ENVIRONMENT}" \
+            -e "migration_bucket_name=${{ inputs.migration_bucket }}"
+
+
+  # =========================================================
+  # JOB 5 - Database migration
+  # Starts only after WordPress configuration succeeds
+  # =========================================================
+  migrate:
+    name: Migrate Database
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    needs: configure
+
+    env:
+      ANSIBLE_TRANSFER_BUCKET: ${{ vars.ANSIBLE_TRANSFER_BUCKET }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_MIGRATION_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible-core boto3 botocore
+          ansible-galaxy collection install amazon.aws
+
+      - name: Install AWS Session Manager plugin
+        run: |
+          curl \
+            "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+            -o session-manager-plugin.deb
+
+          sudo dpkg -i session-manager-plugin.deb
+
+      - name: Migrate WordPress database
+        run: |
+          ansible-playbook \
+            -i ansible/inventory/aws_ec2.yml \
+            ansible/playbooks/migrate-database.yml \
+            -e "target_environment=${TARGET_ENVIRONMENT}" \
+            -e "migration_bucket_name=${{ inputs.migration_bucket }}" \
+            -e "wordpress_site_url=${{ vars.WORDPRESS_SITE_URL }}"
+
+
+  # =========================================================
+  # JOB 6 - Validate completed migration
+  # Starts only after database migration succeeds
+  # =========================================================
+  validate:
+    name: Validate Migration
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    needs: migrate
+
+    env:
+      ANSIBLE_TRANSFER_BUCKET: ${{ vars.ANSIBLE_TRANSFER_BUCKET }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_MIGRATION_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible-core boto3 botocore
+          ansible-galaxy collection install amazon.aws
+
+      - name: Install AWS Session Manager plugin
+        run: |
+          curl \
+            "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+            -o session-manager-plugin.deb
+
+          sudo dpkg -i session-manager-plugin.deb
+
+      - name: Validate WordPress migration
+        run: |
+          ansible-playbook \
+            -i ansible/inventory/aws_ec2.yml \
+            ansible/playbooks/validate-migration.yml \
+            -e "target_environment=${TARGET_ENVIRONMENT}"

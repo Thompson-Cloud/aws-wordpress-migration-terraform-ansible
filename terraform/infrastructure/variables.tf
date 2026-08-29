@@ -56,3 +56,9 @@ variable "db_allocated_storage" {
   type        = number
   default     = 20
 }
+
+variable "alert_email" {
+  description = "Email address that receives CloudWatch infrastructure alerts."
+  type        = string
+  sensitive   = true
+}

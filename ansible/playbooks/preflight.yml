@@ -1,0 +1,31 @@
+---
+- name: Validate WordPress migration target
+  hosts: wordpress
+  gather_facts: false
+
+  vars_files:
+    - ../group_vars/wordpress.yml
+
+  pre_tasks:
+    - name: Confirm WordPress application hosts were discovered
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length > 0
+        fail_msg: "No WordPress application instances were discovered."
+        success_msg: >-
+          Discovered {{ ansible_play_hosts_all | length }}
+          WordPress application instance(s).
+      run_once: true
+
+    - name: Discover and validate target RDS database
+      ansible.builtin.include_tasks:
+        file: ../tasks/discover-rds.yml
+      run_once: true
+
+  tasks:
+    - name: Verify Ansible connectivity through AWS Systems Manager
+      ansible.builtin.ping:
+
+    - name: Report successful application host connectivity
+      ansible.builtin.debug:
+        msg: "SSM connectivity verified for {{ inventory_hostname }}."

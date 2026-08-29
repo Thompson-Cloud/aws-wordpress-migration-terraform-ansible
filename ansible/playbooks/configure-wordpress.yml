@@ -7,6 +7,10 @@
     - ../group_vars/wordpress.yml
 
   pre_tasks:
+    - name: Discover target RDS database
+      ansible.builtin.include_tasks:
+        file: ../tasks/discover-rds.yml
+
     - name: Retrieve RDS master secret from AWS Secrets Manager
       ansible.builtin.command:
         cmd: >
@@ -23,6 +27,7 @@
 
     - name: Parse RDS master secret
       ansible.builtin.set_fact:
+        db_username: "{{ (rds_secret_raw.stdout | from_json).username }}"
         db_password: "{{ (rds_secret_raw.stdout | from_json).password }}"
       no_log: true
 
