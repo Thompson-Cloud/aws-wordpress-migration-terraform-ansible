@@ -7,6 +7,11 @@
     - ../group_vars/wordpress.yml
 
   pre_tasks:
+    - name: Discover target RDS database
+      ansible.builtin.include_tasks:
+        file: ../tasks/discover-rds.yml
+      run_once: true
+
     - name: Retrieve RDS master secret from AWS Secrets Manager
       ansible.builtin.command:
         cmd: >
@@ -20,12 +25,14 @@
       register: rds_secret_raw
       changed_when: false
       no_log: true
+      run_once: true
 
     - name: Parse RDS master secret
       ansible.builtin.set_fact:
         db_username: "{{ (rds_secret_raw.stdout | from_json).username }}"
         db_password: "{{ (rds_secret_raw.stdout | from_json).password }}"
       no_log: true
+      run_once: true
 
   tasks:
     - name: Query migrated WordPress data in RDS
@@ -51,7 +58,9 @@
       register: wordpress_validation
       changed_when: false
       no_log: true
+      run_once: true
 
     - name: Display migrated WordPress validation results
       ansible.builtin.debug:
         var: wordpress_validation.stdout_lines
+      run_once: true
