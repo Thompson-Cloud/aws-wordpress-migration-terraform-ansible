@@ -23,3 +23,13 @@ variable "allowed_ansible_transfer_buckets" {
   description = "S3 buckets that GitHub Actions may use for temporary Ansible SSM transfers."
   type        = list(string)
 }
+
+variable "github_organization_id" {
+  description = "Immutable numeric GitHub organization/owner ID used in OIDC subject claims."
+  type        = string
+}
+
+variable "github_repository_id" {
+  description = "Immutable numeric GitHub repository ID used in OIDC subject claims."
+  type        = string
+}
