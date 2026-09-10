@@ -1,12 +1,12 @@
 # Automated WordPress Migration to AWS
 
-An automated migration workflow for moving an existing **WordPress application and MySQL database to AWS** using **Terraform, Ansible, GitHub Actions, AWS Systems Manager, Amazon RDS, Amazon S3, AWS Secrets Manager, and GitHub OIDC**.
+An automated workflow for migrating an existing **WordPress application and MySQL database to AWS** using **Terraform, Ansible, GitHub Actions, AWS Systems Manager, Amazon RDS, Amazon S3, AWS Secrets Manager, and GitHub OIDC**.
 
-The project focuses on a specific operational problem: **reducing the manual coordination required to execute a familiar migration process reliably.**
+The project focuses on one operational problem: **reducing the manual coordination required to execute a familiar migration process reliably.**
 
 The migration was developed in two stages:
 
-- **V1 — Migration Baseline:** Established a reliable AWS migration path using Terraform and Ansible.
+- **V1 — Migration Baseline:** Established the AWS migration path using Terraform and Ansible.
 - **V2 — Migration Orchestration:** Removed the remaining manual coordination using GitHub Actions, OIDC, dynamic AWS resource discovery, and automated validation.
 
 > **The engineer controls the intent. The automation handles the execution.**
@@ -15,44 +15,38 @@ The migration was developed in two stages:
 
 ## Architecture
 
-
 ![Automated WordPress Migration to AWS Architecture](docs/images/aws-wordpress-migration-architecture.png)
 
-*Figure 1 — Automated WordPress migration architecture showing GitHub Actions orchestration, OIDC-based AWS authentication, Ansible configuration and migration through Systems Manager, and the WordPress EC2-to-RDS application path.*
+*Figure 1 — GitHub Actions orchestrates the migration, Ansible performs configuration and migration through Systems Manager, and Terraform manages the AWS infrastructure lifecycle.*
 
-- **Terraform** — provisions and manages AWS infrastructure
-- **Ansible** — configures EC2 and performs the WordPress and MySQL migration
-- **GitHub Actions** — coordinates migration stages
-- **AWS Systems Manager** — provides Ansible connectivity without inbound SSH
-- **GitHub OIDC** — provides temporary AWS credentials to the workflow
+- **Terraform** — provisions AWS infrastructure
+- **Ansible** — configures EC2 and performs the WordPress/MySQL migration
+- **GitHub Actions** — orchestrates migration stages
+- **AWS Systems Manager** — provides connectivity without inbound SSH
+- **GitHub OIDC** — provides temporary AWS credentials
 - **Amazon S3** — stores migration artifacts
 - **AWS Secrets Manager** — provides RDS credentials
 - **CloudWatch + SNS** — provide monitoring and notifications
 
-Terraform remains outside the GitHub Actions migration workflow, keeping **infrastructure lifecycle and workload migration as separate responsibilities**.
+Terraform remains outside the migration workflow, separating **infrastructure lifecycle from workload migration**.
 
 ---
 
 ## Migration Workflow
 
-The migration is started manually using `workflow_dispatch`, allowing the engineer to select the target environment and initiate the migration intentionally.
+The migration is initiated manually using `workflow_dispatch`. The engineer selects the target environment and provides the S3 bucket containing the migration artifacts.
+
+![Operator-Controlled Migration Trigger](docs/images/github-actions-migration-trigger.png)
+
+*Figure 2 — The engineer provides migration intent; the workflow handles target discovery and execution.*
 
 ```text
-        Validate Artifacts ────┐
-                               ├──► Preflight
-        Validate Target ───────┘
-                                  │
-                                  ▼
-                              Configure
-                                  │
-                                  ▼
-                               Migrate
-                                  │
-                                  ▼
-                               Validate
+Validate Artifacts ──┐
+                     ├──► Preflight ► Configure ► Migrate ► Validate
+Validate Target ─────┘
 ```
 
-Each stage gates the next. Missing artifacts, invalid targets, or failed preflight checks stop the workflow before migration continues.
+Each stage gates the next. A failed validation, target check, or migration step prevents later stages from continuing.
 
 ---
 
@@ -63,20 +57,19 @@ The workflow discovers AWS resources using tags rather than hardcoded EC2 instan
 ```text
 Project     = aws-wordpress-migration
 Environment = lab
-Role        = wordpress-app
+Role        = wordpress-app / wordpress-db
 ```
-
-The RDS database uses the corresponding `wordpress-db` role.
 
 The engineer provides:
 
 ```text
-Environment = lab
+Environment      = lab
+Migration bucket = <S3 migration-artifact bucket>
 ```
 
-The automation discovers the infrastructure behind it.
+The automation discovers the corresponding infrastructure.
 
-For RDS, the workflow expects exactly one matching database and fails on missing or ambiguous targets rather than selecting one automatically.
+RDS discovery expects exactly one matching database and fails when the target is missing or ambiguous.
 
 ---
 
@@ -84,20 +77,22 @@ For RDS, the workflow expects exactly one matching database and fails on missing
 
 | Decision | Reason |
 |---|---|
-| Terraform kept outside the migration workflow | Separates infrastructure lifecycle from workload migration |
-| Ansible over Systems Manager | Avoids inbound SSH and SSH key management |
+| Terraform outside the migration workflow | Separates infrastructure lifecycle from workload migration |
+| Ansible through Systems Manager | Provides configuration automation without inbound SSH or SSH key management |
 | Private RDS | Prevents direct public database exposure |
 | GitHub OIDC | Avoids long-lived AWS credentials in GitHub |
-| Tag-based resource discovery | Removes dependency on temporary AWS resource IDs |
-| Secrets Manager | Keeps database credentials out of code and configuration files |
+| Tag-based discovery | Removes dependency on temporary AWS resource IDs |
+| Secrets Manager | Keeps database credentials out of code |
 | `workflow_dispatch` | Keeps migration an intentional operational event |
-| Strict RDS discovery | Fails safely when the target is missing or ambiguous |
+| Strict RDS discovery | Fails safely on missing or ambiguous targets |
 
 ---
 
 ## Results
 
-The final GitHub Actions workflow completed all six migration stages successfully:
+The final **CloudTee** migration reused the same automated workflow without changes to the migration orchestration, demonstrating that the workflow was not tied to the earlier application content.
+
+All six stages completed successfully:
 
 ```text
 ✓ Validate Migration Artifacts
@@ -110,15 +105,15 @@ The final GitHub Actions workflow completed all six migration stages successfull
 
 ### Automated Migration Pipeline
 
-![Successful GitHub Actions Migration](docs/images/github-actions-success.png)
+![Successful GitHub Actions Migration](docs/images/github-actions-migration-success.png)
+
+*Figure 3 — Final migration run completed successfully in 5m 37s.*
 
 ### Migrated WordPress Application
 
-![Migrated WordPress Application](docs/images/migrated-wordpress-site.png)
+![CloudTee Migrated WordPress Application](docs/images/cloudtee-migrated-application.png)
 
-### AWS Validation
-
-![AWS Infrastructure Validation](docs/images/aws-validation.png)
+*Figure 4 — CloudTee running on AWS after the automated WordPress and MySQL migration.*
 
 Migration success was validated at three levels:
 
@@ -134,11 +129,12 @@ Migration Success
 
 Validation confirmed that:
 
-- EC2 was running and online through Systems Manager
+- EC2 was running and accessible through Systems Manager
 - RDS was available, encrypted, and not publicly accessible
-- The migrated WordPress application loaded successfully
+- WordPress configuration and database migration completed successfully
 - Migrated database content was present
-- CloudWatch alarms were healthy
+- The CloudTee application loaded successfully
+- CloudWatch monitoring was configured
 
 ---
 
@@ -151,7 +147,7 @@ Validation confirmed that:
 - No inbound SSH administration
 - Security-group-to-security-group MySQL access
 - S3 encryption and public-access blocking
-- Database credentials stored in Secrets Manager
+- Database credentials managed through Secrets Manager
 - GitHub OIDC instead of long-lived AWS access keys
 - IAM-based access control
 
@@ -164,47 +160,24 @@ Validation confirmed that:
 ├── .github/
 │   └── workflows/
 │       └── migrate-wordpress.yml
-│
 ├── ansible/
 │   ├── group_vars/
 │   ├── inventory/
 │   ├── playbooks/
 │   └── tasks/
-│
 ├── docs/
-│   ├── AWS-WordPress-Migration-Technical-Documentation.pdf
 │   └── images/
-│
 ├── scripts/
 │   └── validate-artifacts.sh
-│
 ├── terraform/
 │   ├── bootstrap/
 │   ├── github-oidc/
 │   └── infrastructure/
-│
 ├── .gitignore
 └── README.md
 ```
 
----
-
-## Technology Stack
-
-| Responsibility | Technology |
-|---|---|
-| Infrastructure as Code | Terraform |
-| Configuration & Migration | Ansible |
-| Migration Orchestration | GitHub Actions |
-| AWS Authentication | GitHub OIDC |
-| Compute | Amazon EC2 |
-| Database | Amazon RDS for MySQL |
-| Storage | Amazon S3 |
-| Server Management | AWS Systems Manager |
-| Secrets | AWS Secrets Manager |
-| Identity & Access | AWS IAM |
-| Monitoring | Amazon CloudWatch |
-| Notifications | Amazon SNS |
+Migration artifacts (`wordpress-files.tar.gz` and `wordpress.sql`) are kept outside Git and uploaded to the private migration S3 bucket when required.
 
 ---
 
@@ -212,7 +185,7 @@ Validation confirmed that:
 
 This project focuses on the **migration and automation workflow**, not on designing a complete production WordPress hosting platform.
 
-The lab uses a cost-conscious Single-AZ database design and direct EC2 application access. Production requirements such as high availability, HTTPS, load balancing, scaling, backup/recovery, and formal cutover or rollback procedures would be evaluated separately based on workload requirements.
+The lab uses a cost-conscious Single-AZ database and direct HTTP access to EC2 for application validation. Production requirements such as HTTPS, load balancing, high availability, scaling, backup/recovery, DNS cutover, and formal rollback procedures would be evaluated separately based on workload requirements.
 
 ---
 
@@ -220,13 +193,11 @@ The lab uses a cost-conscious Single-AZ database design and direct EC2 applicati
 
 ### Engineering Case Study
 
-The full engineering story covers the transition from manually coordinated migration to orchestration, design decisions, OIDC troubleshooting, validation strategy, and lessons learned.
+The full engineering story covers the transition from manually coordinated migration to automation, architectural decisions, OIDC troubleshooting, validation strategy, and lessons learned.
 
 **[Read the engineering case study on Medium](ADD-MEDIUM-ARTICLE-URL-HERE)**
 
 ### Technical Documentation
-
-For the detailed implementation:
 
 **[View Full Technical Documentation](docs/AWS-WordPress-Migration-Technical-Documentation.pdf)**
 
@@ -234,10 +205,10 @@ For the detailed implementation:
 
 ## Outcome
 
-The project transformed a familiar migration process from **manually coordinated execution** into a repeatable workflow with:
+The project transformed a familiar migration process from **manually coordinated execution** into a repeatable workflow:
 
 **dynamic resource discovery → temporary authentication → controlled sequencing → automated migration → end-to-end validation**
 
-The engineer still controls **what environment to migrate into and when to start**.
+The engineer controls **what environment to migrate into and when to start**.
 
-**The automation handles the repetitive execution required to complete it reliably.**
+> **The automation handles the repetitive execution required to complete it reliably.**

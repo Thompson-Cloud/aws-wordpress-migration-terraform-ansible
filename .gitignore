@@ -50,3 +50,4 @@ wp-cli.phar
 
 # Python virtual environment
 .venv/
+migration-artifacts/
