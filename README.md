@@ -193,13 +193,10 @@ The lab uses a cost-conscious Single-AZ database and direct HTTP access to EC2 f
 
 ### Engineering Case Study
 
-The full engineering story covers the transition from manually coordinated migration to automation, architectural decisions, OIDC troubleshooting, validation strategy, and lessons learned.
+The full engineering story covers the transition from manually coordinated migration to automation, architectural decisions, OIDC troubleshooting, validation strategy, and engineering trade-offs.
 
-**[Read the engineering case study on Medium](ADD-MEDIUM-ARTICLE-URL-HERE)**
+**[Read the engineering case study on Medium](https://medium.com/@thompson.onwubiko.dev/from-manual-migration-to-automation-automating-wordpress-migration-to-aws-ae748ecdd89f)**
 
-### Technical Documentation
-
-**[View Full Technical Documentation](docs/AWS-WordPress-Migration-Technical-Documentation.pdf)**
 
 ---
 
@@ -211,4 +208,4 @@ The project transformed a familiar migration process from **manually coordinated
 
 The engineer controls **what environment to migrate into and when to start**.
 
-> **The automation handles the repetitive execution required to complete it reliably.**
+> **The automation handles the repetitive execution required to complete it reliably.**
