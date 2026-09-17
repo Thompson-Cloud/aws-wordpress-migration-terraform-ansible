@@ -202,10 +202,10 @@ The full engineering story covers the transition from manually coordinated migra
 
 ## Outcome
 
-The project transformed a familiar migration process from **manually coordinated execution** into a repeatable workflow:
+The project transformed a familiar migration process from manually coordinated execution into a repeatable workflow:
 
 **dynamic resource discovery → temporary authentication → controlled sequencing → automated migration → end-to-end validation**
 
-The engineer controls **what environment to migrate into and when to start**.
+The engineer controls what environment to migrate into and when to start.
 
-> **The automation handles the repetitive execution required to complete it reliably.**
+> **The automation handles the repetitive execution required to complete it reliably.**
